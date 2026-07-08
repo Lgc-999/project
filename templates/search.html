@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>用户搜索</h2>
+    <form method="GET" action="/search">
+        <div class="form-group" style="display: flex; gap: 8px;">
+            <input type="text" name="keyword" placeholder="输入用户名或邮箱搜索" value="{{ keyword }}" style="flex: 1;">
+            <button type="submit" class="btn btn-primary">搜索</button>
+        </div>
+    </form>
+
+    {% if keyword %}
+        {% if results %}
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>用户名</th>
+                        <th>邮箱</th>
+                        <th>手机</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in results %}
+                    <tr>
+                        <td>{{ r.id }}</td>
+                        <td>{{ r.username }}</td>
+                        <td>{{ r.email }}</td>
+                        <td>{{ r.phone }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p style="color: #999; text-align: center; margin-top: 16px;">无搜索结果</p>
+        {% endif %}
+    {% endif %}
+</div>
+{% endblock %}

@@ -20,11 +20,13 @@ def init_db():
             phone TEXT
         )
     """)
-    # 插入默认用户
+    # 插入默认用户（密码哈希存储）
+    admin_pw = generate_password_hash("admin123")
+    alice_pw = generate_password_hash("alice2025")
     c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
-              ("admin", "admin123", "admin@example.com", "13800138000"))
+              ("admin", admin_pw, "admin@example.com", "13800138000"))
     c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
-              ("alice", "alice2025", "alice@example.com", "13900139001"))
+              ("alice", alice_pw, "alice@example.com", "13900139001"))
     conn.commit()
     conn.close()
 
@@ -139,6 +141,15 @@ def register():
         try:
             c.execute(sql)
             conn.commit()
+            # 同步到 USERS 字典，使新用户可以登录
+            USERS[username] = {
+                "username": username,
+                "password": generate_password_hash(password),
+                "role": "user",
+                "email": email,
+                "phone": phone,
+                "balance": 0,
+            }
             msg = "注册成功，请登录"
         except Exception as e:
             msg = f"注册失败：{str(e)}"
