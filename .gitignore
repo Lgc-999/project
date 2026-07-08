@@ -7,4 +7,4 @@ venv/
 .venv/
 data/
 *.docx
-*.md
+SECURITY_REPORT.md
