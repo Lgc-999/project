@@ -7,3 +7,4 @@ venv/
 .venv/
 data/
 *.docx
+*.md
