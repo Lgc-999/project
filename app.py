@@ -93,9 +93,10 @@ def index():
     if keyword:
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
-        sql = f"SELECT id, username, email, phone FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
-        print(f"[SQL] {sql}")
-        c.execute(sql)
+        like = f"%{keyword}%"
+        sql = "SELECT id, username, email, phone FROM users WHERE username LIKE ? OR email LIKE ?"
+        print(f"[SQL] {sql} (keyword=%{keyword}%)")
+        c.execute(sql, (like, like))
         rows = c.fetchall()
         for row in rows:
             results.append({"id": row[0], "username": row[1], "email": row[2], "phone": row[3]})
@@ -136,10 +137,10 @@ def register():
 
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
-        sql = f"INSERT INTO users (username, password, email, phone) VALUES ('{username}', '{password}', '{email}', '{phone}')"
-        print(f"[SQL] {sql}")
+        sql = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
+        print(f"[SQL] {sql} (username={username})")
         try:
-            c.execute(sql)
+            c.execute(sql, (username, password, email, phone))
             conn.commit()
             # 同步到 USERS 字典，使新用户可以登录
             USERS[username] = {
@@ -165,9 +166,10 @@ def search():
     if keyword:
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
-        sql = f"SELECT id, username, email, phone FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
-        print(f"[SQL] {sql}")
-        c.execute(sql)
+        like = f"%{keyword}%"
+        sql = "SELECT id, username, email, phone FROM users WHERE username LIKE ? OR email LIKE ?"
+        print(f"[SQL] {sql} (keyword=%{keyword}%)")
+        c.execute(sql, (like, like))
         rows = c.fetchall()
         for row in rows:
             results.append({"id": row[0], "username": row[1], "email": row[2], "phone": row[3]})
