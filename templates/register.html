@@ -2,7 +2,11 @@
 {% block content %}
 <div class="card">
     <h2>用户注册</h2>
+    {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
     <form method="POST" action="/register">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
             <label for="username">用户名</label>
             <input type="text" id="username" name="username" placeholder="请输入用户名" required>
