@@ -2,6 +2,9 @@
 {% block content %}
 <div class="card login-card">
     <h2>用户登录</h2>
+    {% if msg %}
+        <div class="alert alert-success">{{ msg }}</div>
+    {% endif %}
     {% if error %}
         <div class="alert alert-error">{{ error }}</div>
     {% endif %}
@@ -16,5 +19,8 @@
         </div>
         <button type="submit" class="btn btn-primary">登录</button>
     </form>
+    <p style="margin-top: 16px; text-align: center;">
+        没有账号？<a href="/register">去注册</a>
+    </p>
 </div>
 {% endblock %}

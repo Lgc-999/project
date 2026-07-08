@@ -1,9 +1,34 @@
 from flask import Flask, render_template, request, redirect, session, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
-import os
+from collections import defaultdict
+import sqlite3, os, time
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
+
+# ========== 数据库初始化 ==========
+def init_db():
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            email TEXT,
+            phone TEXT
+        )
+    """)
+    # 插入默认用户
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+              ("admin", "admin123", "admin@example.com", "13800138000"))
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+              ("alice", "alice2025", "alice@example.com", "13900139001"))
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # 禁用浏览器缓存
 @app.after_request
@@ -34,8 +59,6 @@ USERS = {
 }
 
 # 简单 IP 限流（每 IP 每分钟最多 5 次登录尝试）
-from collections import defaultdict
-import time
 login_attempts = defaultdict(list)
 MAX_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
@@ -62,7 +85,20 @@ def safe_user_data(user):
 def index():
     username = session.get("username")
     user = USERS.get(username) if username else None
-    return render_template("index.html", user=safe_user_data(user))
+    # 获取搜索参数
+    keyword = request.args.get("keyword", "")
+    results = []
+    if keyword:
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        sql = f"SELECT id, username, email, phone FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
+        print(f"[SQL] {sql}")
+        c.execute(sql)
+        rows = c.fetchall()
+        for row in rows:
+            results.append({"id": row[0], "username": row[1], "email": row[2], "phone": row[3]})
+        conn.close()
+    return render_template("index.html", user=safe_user_data(user), results=results, keyword=keyword)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -86,6 +122,46 @@ def login():
         record_attempt(ip)
         return render_template("login.html", error="用户名或密码错误")
     return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+        email = request.form.get("email")
+        phone = request.form.get("phone")
+
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        sql = f"INSERT INTO users (username, password, email, phone) VALUES ('{username}', '{password}', '{email}', '{phone}')"
+        print(f"[SQL] {sql}")
+        try:
+            c.execute(sql)
+            conn.commit()
+            msg = "注册成功，请登录"
+        except Exception as e:
+            msg = f"注册失败：{str(e)}"
+        conn.close()
+        return render_template("login.html", msg=msg)
+    return render_template("register.html")
+
+
+@app.route("/search")
+def search():
+    keyword = request.args.get("keyword", "")
+    results = []
+    if keyword:
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        sql = f"SELECT id, username, email, phone FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
+        print(f"[SQL] {sql}")
+        c.execute(sql)
+        rows = c.fetchall()
+        for row in rows:
+            results.append({"id": row[0], "username": row[1], "email": row[2], "phone": row[3]})
+        conn.close()
+    return render_template("search.html", results=results, keyword=keyword)
 
 
 @app.route("/logout")
