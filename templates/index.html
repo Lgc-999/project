@@ -3,6 +3,11 @@
 {% if user %}
     <div class="card">
         <h2>欢迎回来，{{ user.username }}！</h2>
+        {% if user.avatar %}
+            <div style="text-align: center; margin-bottom: 16px;">
+                <img src="{{ user.avatar }}" alt="头像" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid #667eea;">
+            </div>
+        {% endif %}
         <ul class="info-list">
             <li><span class="label">用户名：</span>{{ user.username }}</li>
             <li><span class="label">邮箱：</span>{{ user.email }}</li>

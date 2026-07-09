@@ -244,6 +244,10 @@ def upload():
 
         f.save(path)
         url = f"/static/uploads/{safe_filename}"
+        # 保存头像 URL 到用户信息
+        username = session.get("username")
+        if username in USERS:
+            USERS[username]["avatar"] = url
         return render_template("upload.html", success=True, url=url, filename=safe_filename)
 
     return render_template("upload.html")
