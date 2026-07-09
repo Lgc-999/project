@@ -10,6 +10,7 @@ app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,
 )
 
 # ========== CSRF 防护 ==========
@@ -194,6 +195,59 @@ def search():
 def logout():
     session.clear()
     return redirect("/")
+
+
+@app.route("/upload", methods=["GET", "POST"])
+def upload():
+    if "username" not in session:
+        return redirect("/login")
+
+    if request.method == "POST":
+        f = request.files.get("file")
+        if not f or not f.filename:
+            return render_template("upload.html", error="请选择文件")
+
+        # 检查文件扩展名
+        ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
+        ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+        if ext not in ALLOWED_EXTENSIONS:
+            return render_template("upload.html", error=f"不支持的文件类型: .{ext}，仅支持图片格式")
+
+        # 检查 MIME 类型
+        if not f.content_type or not f.content_type.startswith("image/"):
+            return render_template("upload.html", error=f"非图片文件: {f.content_type}")
+
+        # 读取文件头魔数验证是否为真实图片
+        header = f.read(16)
+        f.seek(0)
+        is_image = False
+        if header[:8] == b'\x89PNG\r\n\x1a\n': is_image = True          # PNG
+        elif header[:2] == b'\xff\xd8': is_image = True                  # JPEG
+        elif header[:6] in (b'GIF87a', b'GIF89a'): is_image = True      # GIF
+        elif header[:4] == b'RIFF' and header[8:12] == b'WEBP': is_image = True  # WebP
+        elif header[:2] == b'BM': is_image = True                        # BMP
+        if not is_image:
+            return render_template("upload.html", error="文件内容不是有效图片")
+
+        # 防止路径穿越
+        safe_filename = os.path.basename(f.filename)
+        os.makedirs("static/uploads", exist_ok=True)
+        path = os.path.join("static/uploads", safe_filename)
+
+        # 处理同名文件
+        counter = 1
+        while os.path.exists(path):
+            name, ext2 = safe_filename.rsplit(".", 1) if "." in safe_filename else (safe_filename, "")
+            safe_filename = f"{name}_{counter}.{ext2}" if ext2 else f"{name}_{counter}"
+            path = os.path.join("static/uploads", safe_filename)
+            counter += 1
+
+        f.save(path)
+        url = f"/static/uploads/{safe_filename}"
+        return render_template("upload.html", success=True, url=url, filename=safe_filename)
+
+    return render_template("upload.html")
+
 
 if __name__ == "__main__":
     debug = os.environ.get("FLASK_ENV") == "development"
