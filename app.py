@@ -50,9 +50,15 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             email TEXT,
-            phone TEXT
+            phone TEXT,
+            avatar TEXT DEFAULT NULL
         )
     """)
+    # 兼容旧表：如果 avatar 列不存在则添加
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     admin_pw = generate_password_hash("admin123")
     alice_pw = generate_password_hash("alice2025")
     c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
@@ -64,17 +70,20 @@ def init_db():
 
 init_db()
 
+
 # 密码使用哈希存储（非明文）
 USERS = {
     "admin": {
+        "id": 1,
         "username": "admin",
         "password": generate_password_hash("admin123"),
         "role": "admin",
         "email": "admin@example.com",
         "phone": "13800138000",
-        "balance": 99999,
+        "balance": 9999,
     },
     "alice": {
+        "id": 2,
         "username": "alice",
         "password": generate_password_hash("alice2025"),
         "role": "user",
@@ -83,6 +92,22 @@ USERS = {
         "balance": 100,
     },
 }
+NEXT_USER_ID = 3
+
+# 从数据库加载头像到 USERS 字典
+def load_avatars():
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    try:
+        c.execute("SELECT username, avatar FROM users WHERE avatar IS NOT NULL AND avatar != ''")
+        for row in c.fetchall():
+            if row[0] in USERS:
+                USERS[row[0]]["avatar"] = row[1]
+    except sqlite3.OperationalError:
+        pass
+    conn.close()
+
+load_avatars()
 
 # 暴力破解防护
 login_attempts = defaultdict(list)
@@ -160,6 +185,7 @@ def register():
             c.execute(sql, (username, password, email, phone))
             conn.commit()
             USERS[username] = {
+                "id": NEXT_USER_ID,
                 "username": username,
                 "password": generate_password_hash(password),
                 "role": "user",
@@ -167,6 +193,7 @@ def register():
                 "phone": phone,
                 "balance": 0,
             }
+            globals()["NEXT_USER_ID"] = NEXT_USER_ID + 1
             msg = "注册成功，请登录"
         except Exception as e:
             msg = f"注册失败：{str(e)}"
@@ -182,12 +209,12 @@ def search():
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
         like = f"%{keyword}%"
-        sql = "SELECT id, username, email, phone FROM users WHERE username LIKE ? OR email LIKE ?"
+        sql = "SELECT id, username FROM users WHERE username LIKE ? OR email LIKE ?"
         print(f"[SQL] {sql} (keyword=%{keyword}%)")
         c.execute(sql, (like, like))
         rows = c.fetchall()
         for row in rows:
-            results.append({"id": row[0], "username": row[1], "email": row[2], "phone": row[3]})
+            results.append({"id": row[0], "username": row[1]})
         conn.close()
     return render_template("search.html", results=results, keyword=keyword)
 
@@ -244,13 +271,51 @@ def upload():
 
         f.save(path)
         url = f"/static/uploads/{safe_filename}"
-        # 保存头像 URL 到用户信息
+        # 保存头像 URL 到用户信息（内存 + 数据库）
         username = session.get("username")
         if username in USERS:
             USERS[username]["avatar"] = url
+            conn2 = sqlite3.connect("data/users.db")
+            c2 = conn2.cursor()
+            c2.execute("UPDATE users SET avatar = ? WHERE username = ?", (url, username))
+            conn2.commit()
+            conn2.close()
         return render_template("upload.html", success=True, url=url, filename=safe_filename)
 
     return render_template("upload.html")
+
+
+@app.route("/profile")
+def profile():
+    if "username" not in session:
+        return redirect("/login")
+    username = session.get("username")
+    target = USERS.get(username)
+    if not target:
+        return render_template("profile.html", error="用户不存在")
+    return render_template("profile.html", user=safe_user_data(target))
+
+
+@app.route("/recharge", methods=["POST"])
+def recharge():
+    if "username" not in session:
+        return redirect("/login")
+    username = session.get("username")
+    target = USERS.get(username)
+    amount_str = request.form.get("amount", "0")
+    try:
+        amount = int(amount_str)
+    except ValueError:
+        return render_template("profile.html", user=safe_user_data(target), error="金额格式错误")
+
+    if amount <= 0:
+        return render_template("profile.html", user=safe_user_data(target), error="充值金额必须大于0")
+
+    if target:
+        target["balance"] = target.get("balance", 0) + amount
+    # 从 session 中的用户名获取 id 跳转
+    uid = target.get("id")
+    return redirect(f"/profile?user_id={uid}")
 
 
 if __name__ == "__main__":

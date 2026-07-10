@@ -16,6 +16,7 @@
             <li><span class="label">余额：</span>{{ user.balance }}</li>
         </ul>
         <a href="/upload" class="btn btn-primary" style="margin-right: 8px;">上传头像</a>
+        <a href="/profile" class="btn btn-primary" style="margin-right: 8px;">个人中心</a>
         <a href="/logout" class="btn btn-primary">退出登录</a>
     </div>
 
@@ -36,8 +37,6 @@
                         <tr>
                             <th>ID</th>
                             <th>用户名</th>
-                            <th>邮箱</th>
-                            <th>手机</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -45,8 +44,6 @@
                         <tr>
                             <td>{{ r.id }}</td>
                             <td>{{ r.username }}</td>
-                            <td>{{ r.email }}</td>
-                            <td>{{ r.phone }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
