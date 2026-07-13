@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-{% if user %}
+
+{% if page_content %}
+    <div class="card">
+        {{ page_content | safe }}
+        <p style="margin-top: 16px;"><a href="/" class="btn btn-primary">返回首页</a></p>
+    </div>
+{% elif user %}
     <div class="card">
         <h2>欢迎回来，{{ user.username }}！</h2>
         {% if user.avatar %}

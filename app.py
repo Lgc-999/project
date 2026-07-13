@@ -318,6 +318,32 @@ def recharge():
     return redirect(f"/profile?user_id={uid}")
 
 
+@app.route("/page")
+def dynamic_page():
+    name = request.args.get("name", "")
+    content = None
+    if name:
+        base_dir = os.path.abspath("pages")
+        path = os.path.abspath(os.path.join("pages", name))
+        if not path.startswith(base_dir):
+            content = "页面不存在"
+        elif os.path.exists(path) and os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+        else:
+            path2 = os.path.abspath(os.path.join("pages", name + ".html"))
+            if not path2.startswith(base_dir):
+                content = "页面不存在"
+            elif os.path.exists(path2) and os.path.isfile(path2):
+                with open(path2, "r", encoding="utf-8") as f:
+                    content = f.read()
+            else:
+                content = "页面不存在"
+    else:
+        content = "请输入页面名称"
+    return render_template("index.html", page_content=content, page_name=name)
+
+
 if __name__ == "__main__":
     debug = os.environ.get("FLASK_ENV") == "development"
     app.run(debug=debug, host="0.0.0.0", port=80)
