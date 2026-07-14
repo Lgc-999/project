@@ -149,6 +149,8 @@ def index():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        if not validate_csrf():
+            return render_template("login.html", error="会话过期，请刷新页面重试")
         ip = request.remote_addr
         if is_ip_blocked(ip):
             return render_template("login.html", error=f"尝试次数过多，请 {LOCKOUT_MINUTES} 分钟后再试")
@@ -300,6 +302,8 @@ def profile():
 def recharge():
     if "username" not in session:
         return redirect("/login")
+    if not validate_csrf():
+        return render_template("profile.html", error="CSRF 验证失败，请刷新页面重试")
     username = session.get("username")
     target = USERS.get(username)
     amount_str = request.form.get("amount", "0")
@@ -316,6 +320,19 @@ def recharge():
     # 从 session 中的用户名获取 id 跳转
     uid = target.get("id")
     return redirect(f"/profile?user_id={uid}")
+
+
+@app.route("/change-password", methods=["POST"])
+def change_password():
+    if "username" not in session:
+        return redirect("/login")
+    if not validate_csrf():
+        return render_template("profile.html", error="CSRF 验证失败，请刷新页面重试")
+    username = request.form.get("username")
+    new_password = request.form.get("new_password")
+    if username and new_password and username in USERS:
+        USERS[username]["password"] = generate_password_hash(new_password)
+    return redirect("/profile")
 
 
 @app.route("/page")
