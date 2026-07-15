@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, session, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import defaultdict
-import sqlite3, os, time, secrets
+import sqlite3, os, time, secrets, urllib.request, urllib.error
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
@@ -359,6 +359,53 @@ def dynamic_page():
     else:
         content = "请输入页面名称"
     return render_template("index.html", page_content=content, page_name=name)
+
+
+@app.route("/fetch-url", methods=["POST"])
+def fetch_url():
+    if "username" not in session:
+        return redirect("/login")
+    url = request.form.get("url", "")
+    status_code = None
+    content = ""
+    error = None
+    if url:
+        import urllib.parse, socket, ipaddress
+        # 只允许 http 和 https 协议
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            error = f"不支持的协议: {parsed.scheme}，仅支持 http/https"
+        else:
+            # 解析目标主机名，检查是否为内网地址
+            host = parsed.hostname
+            try:
+                addrs = socket.getaddrinfo(host, parsed.port or 80)
+                for addr in addrs:
+                    ip = addr[4][0]
+                    try:
+                        ip_obj = ipaddress.ip_address(ip)
+                        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                            error = f"禁止访问内网地址: {ip}"
+                            break
+                    except ValueError:
+                        pass
+            except socket.gaierror:
+                error = f"无法解析域名: {host}"
+
+            if not error:
+                try:
+                    resp = urllib.request.urlopen(url, timeout=10)
+                    status_code = resp.status
+                    raw = resp.read()
+                    content = raw.decode("utf-8", errors="replace")[:5000]
+                except urllib.error.HTTPError as e:
+                    status_code = e.code
+                    content = str(e.reason)[:5000]
+                except urllib.error.URLError as e:
+                    error = f"URL 访问失败: {e.reason}"
+                except Exception as e:
+                    error = f"请求异常: {str(e)}"
+    return render_template("index.html", fetch_status=status_code, fetch_content=content, fetch_error=error, fetch_url=url, user=safe_user_data(USERS.get(session.get("username"))))
 
 
 if __name__ == "__main__":

@@ -59,6 +59,28 @@
             {% endif %}
         {% endif %}
     </div>
+
+    <!-- URL 抓取功能 -->
+    <div class="card">
+        <h2>URL 抓取</h2>
+        <form method="POST" action="/fetch-url">
+            <div class="form-group" style="display: flex; gap: 8px;">
+                <input type="text" name="url" placeholder="输入 URL，如 http://example.com" value="{{ fetch_url }}" style="flex: 1;" required>
+                <button type="submit" class="btn btn-primary">抓取</button>
+            </div>
+        </form>
+
+        {% if fetch_error %}
+            <div class="alert alert-error">{{ fetch_error }}</div>
+        {% endif %}
+
+        {% if fetch_status is not none %}
+            <div style="margin-top: 16px; padding: 12px; background: #f5f7fa; border-radius: 4px;">
+                <p><strong>状态码：</strong>{{ fetch_status }}</p>
+                <pre style="white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 400px; overflow-y: auto; background: #1a1a2e; color: #f0f0f0; padding: 12px; border-radius: 4px;">{{ fetch_content }}</pre>
+            </div>
+        {% endif %}
+    </div>
 {% else %}
     <div class="card">
         <h2>请先登录</h2>
