@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, session, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import defaultdict
-import sqlite3, os, time, secrets, urllib.request, urllib.error
+import sqlite3, os, time, secrets, urllib.request, urllib.error, subprocess, platform
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
@@ -406,6 +406,27 @@ def fetch_url():
                 except Exception as e:
                     error = f"请求异常: {str(e)}"
     return render_template("index.html", fetch_status=status_code, fetch_content=content, fetch_error=error, fetch_url=url, user=safe_user_data(USERS.get(session.get("username"))))
+
+
+@app.route("/ping", methods=["GET", "POST"])
+def ping():
+    if "username" not in session:
+        return redirect("/login")
+    result = None
+    ip = ""
+    if request.method == "POST":
+        ip = request.form.get("ip", "").strip()
+        if ip:
+            try:
+                output = subprocess.check_output(["ping", "-c", "3", ip], timeout=30, stderr=subprocess.STDOUT)
+                result = output.decode("utf-8", errors="replace")
+            except subprocess.CalledProcessError as e:
+                result = e.output.decode("utf-8", errors="replace") if e.output else f"命令执行失败，返回码: {e.returncode}"
+            except subprocess.TimeoutExpired:
+                result = "Ping 超时（30秒）"
+            except Exception as e:
+                result = f"执行异常: {str(e)}"
+    return render_template("ping.html", result=result, ip=ip)
 
 
 if __name__ == "__main__":
