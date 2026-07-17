@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, session, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import defaultdict
-import sqlite3, os, time, secrets, urllib.request, urllib.error, subprocess, platform, re, json
+import sqlite3, os, time, secrets, urllib.request, urllib.error, subprocess, platform, re, json, socket, ipaddress
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
@@ -179,17 +179,24 @@ def register():
         email = request.form.get("email")
         phone = request.form.get("phone")
 
+        # 密码强度检查
+        if len(password) < 6:
+            return render_template("register.html", error="密码长度不能少于6位")
+
+        # 密码哈希后存入数据库
+        password_hash = generate_password_hash(password)
+
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
         sql = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
         print(f"[SQL] {sql} (username={username})")
         try:
-            c.execute(sql, (username, password, email, phone))
+            c.execute(sql, (username, password_hash, email, phone))
             conn.commit()
             USERS[username] = {
                 "id": NEXT_USER_ID,
                 "username": username,
-                "password": generate_password_hash(password),
+                "password": password_hash,
                 "role": "user",
                 "email": email,
                 "phone": phone,
@@ -258,21 +265,23 @@ def upload():
         if not is_image:
             return render_template("upload.html", error="文件内容不是有效图片")
 
-        # 防止路径穿越
+        # 防止路径穿越 + 限制文件名只含安全字符
         safe_filename = os.path.basename(f.filename)
+        # 只保留字母数字下划线连字符和点
+        safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', safe_filename)
         os.makedirs("static/uploads", exist_ok=True)
-        path = os.path.join("static/uploads", safe_filename)
+        path = os.path.join("static/uploads", safe_name)
 
         # 处理同名文件
         counter = 1
         while os.path.exists(path):
-            name, ext2 = safe_filename.rsplit(".", 1) if "." in safe_filename else (safe_filename, "")
-            safe_filename = f"{name}_{counter}.{ext2}" if ext2 else f"{name}_{counter}"
-            path = os.path.join("static/uploads", safe_filename)
+            name_part, ext2 = safe_name.rsplit(".", 1) if "." in safe_name else (safe_name, "")
+            safe_name = f"{name_part}_{counter}.{ext2}" if ext2 else f"{name_part}_{counter}"
+            path = os.path.join("static/uploads", safe_name)
             counter += 1
 
         f.save(path)
-        url = f"/static/uploads/{safe_filename}"
+        url = f"/static/uploads/{safe_name}"
         # 保存头像 URL 到用户信息（内存 + 数据库）
         username = session.get("username")
         if username in USERS:
@@ -282,7 +291,7 @@ def upload():
             c2.execute("UPDATE users SET avatar = ? WHERE username = ?", (url, username))
             conn2.commit()
             conn2.close()
-        return render_template("upload.html", success=True, url=url, filename=safe_filename)
+        return render_template("upload.html", success=True, url=url, filename=safe_name)
 
     return render_template("upload.html")
 
@@ -315,6 +324,10 @@ def recharge():
     if amount <= 0:
         return render_template("profile.html", user=safe_user_data(target), error="充值金额必须大于0")
 
+    # 限制单次充值上限，防止业务逻辑滥用
+    if amount > 100000:
+        return render_template("profile.html", user=safe_user_data(target), error="单次充值金额不能超过100,000")
+
     if target:
         target["balance"] = target.get("balance", 0) + amount
     # 从 session 中的用户名获取 id 跳转
@@ -328,8 +341,11 @@ def change_password():
         return redirect("/login")
     if not validate_csrf():
         return render_template("profile.html", error="CSRF 验证失败，请刷新页面重试")
-    username = request.form.get("username")
+    # 只能修改当前登录用户自己的密码，不从表单拿 username
+    username = session.get("username")
     new_password = request.form.get("new_password")
+    if not new_password or len(new_password) < 6:
+        return render_template("profile.html", user=safe_user_data(USERS.get(username)), error="密码长度不能少于6位")
     if username and new_password and username in USERS:
         USERS[username]["password"] = generate_password_hash(new_password)
     return redirect("/profile")
@@ -340,19 +356,20 @@ def dynamic_page():
     name = request.args.get("name", "")
     content = None
     if name:
-        base_dir = os.path.abspath("pages")
-        path = os.path.abspath(os.path.join("pages", name))
-        if not path.startswith(base_dir):
-            content = "页面不存在"
-        elif os.path.exists(path) and os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+        # 禁止路径分隔符，只允许安全的文件名（字母数字下划线连字符和点）
+        if not re.match(r'^[a-zA-Z0-9_.-]+$', name):
+            content = "页面名称不合法"
         else:
-            path2 = os.path.abspath(os.path.join("pages", name + ".html"))
-            if not path2.startswith(base_dir):
-                content = "页面不存在"
-            elif os.path.exists(path2) and os.path.isfile(path2):
-                with open(path2, "r", encoding="utf-8") as f:
+            base_dir = os.path.abspath("pages")
+            candidates = [name, name + ".html"]
+            found = None
+            for c in candidates:
+                p = os.path.abspath(os.path.join("pages", c))
+                if p.startswith(base_dir) and os.path.exists(p) and os.path.isfile(p):
+                    found = p
+                    break
+            if found:
+                with open(found, "r", encoding="utf-8") as f:
                     content = f.read()
             else:
                 content = "页面不存在"
@@ -370,7 +387,6 @@ def fetch_url():
     content = ""
     error = None
     if url:
-        import urllib.parse, socket, ipaddress
         # 只允许 http 和 https 协议
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https"):
@@ -381,11 +397,11 @@ def fetch_url():
             try:
                 addrs = socket.getaddrinfo(host, parsed.port or 80)
                 for addr in addrs:
-                    ip = addr[4][0]
+                    ip_addr = addr[4][0]
                     try:
-                        ip_obj = ipaddress.ip_address(ip)
+                        ip_obj = ipaddress.ip_address(ip_addr)
                         if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
-                            error = f"禁止访问内网地址: {ip}"
+                            error = f"禁止访问内网地址: {ip_addr}"
                             break
                     except ValueError:
                         pass
@@ -413,20 +429,35 @@ def ping():
     if "username" not in session:
         return redirect("/login")
     result = None
-    ip = ""
+    ip_val = ""
     if request.method == "POST":
-        ip = request.form.get("ip", "").strip()
-        if ip:
+        ip_val = request.form.get("ip", "").strip()
+        if ip_val:
+            # 验证输入是否为合法的 IP 地址或域名
+            is_valid = False
             try:
-                output = subprocess.check_output(["ping", "-c", "3", ip], timeout=30, stderr=subprocess.STDOUT)
-                result = output.decode("utf-8", errors="replace")
-            except subprocess.CalledProcessError as e:
-                result = e.output.decode("utf-8", errors="replace") if e.output else f"命令执行失败，返回码: {e.returncode}"
-            except subprocess.TimeoutExpired:
-                result = "Ping 超时（30秒）"
-            except Exception as e:
-                result = f"执行异常: {str(e)}"
-    return render_template("ping.html", result=result, ip=ip)
+                socket.inet_aton(ip_val)
+                is_valid = True
+            except socket.error:
+                # 不是 IP，检查是否为合法域名
+                domain_re = re.compile(
+                    r'^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
+                )
+                if domain_re.match(ip_val):
+                    is_valid = True
+            if not is_valid:
+                result = "输入不合法：仅支持 IP 地址或域名"
+            else:
+                try:
+                    output = subprocess.check_output(["ping", "-c", "3", ip_val], timeout=30, stderr=subprocess.STDOUT)
+                    result = output.decode("utf-8", errors="replace")
+                except subprocess.CalledProcessError as e:
+                    result = e.output.decode("utf-8", errors="replace") if e.output else f"命令执行失败，返回码: {e.returncode}"
+                except subprocess.TimeoutExpired:
+                    result = "Ping 超时（30秒）"
+                except Exception as e:
+                    result = f"执行异常: {str(e)}"
+    return render_template("ping.html", result=result, ip=ip_val)
 
 
 @app.route("/xml-import", methods=["GET", "POST"])
