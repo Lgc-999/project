@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, session, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import defaultdict
-import sqlite3, os, time, secrets, urllib.request, urllib.error, subprocess, platform
+import sqlite3, os, time, secrets, urllib.request, urllib.error, subprocess, platform, re, json
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
@@ -427,6 +427,36 @@ def ping():
             except Exception as e:
                 result = f"执行异常: {str(e)}"
     return render_template("ping.html", result=result, ip=ip)
+
+
+@app.route("/xml-import", methods=["GET", "POST"])
+def xml_import():
+    if "username" not in session:
+        return redirect("/login")
+    result = None
+    error = None
+    raw_xml = ""
+    if request.method == "POST":
+        raw_xml = request.form.get("xml_data", "")
+        if raw_xml.strip():
+            try:
+                # 移除 DOCTYPE 和 ENTITY 定义，防止 XXE 攻击
+                safe_xml = re.sub(r'<!DOCTYPE[^>]*>', '', raw_xml)
+                safe_xml = re.sub(r'<!ENTITY[^>]*>', '', safe_xml)
+                # 移除实体引用（如 &xxe;）
+                safe_xml = re.sub(r'&\w+;', '', safe_xml)
+
+                # 提取 user 节点
+                users = []
+                for m in re.finditer(r'<user>\s*<name>(.*?)</name>\s*<email>(.*?)</email>\s*</user>', safe_xml, re.DOTALL):
+                    users.append({"name": m.group(1).strip(), "email": m.group(2).strip()})
+                if users:
+                    result = json.dumps(users, ensure_ascii=False, indent=2)
+                else:
+                    error = "未找到有效的 user 节点数据"
+            except Exception as e:
+                error = f"XML 解析失败: {str(e)}"
+    return render_template("xml_import.html", result=result, error=error, xml_data=raw_xml)
 
 
 if __name__ == "__main__":
