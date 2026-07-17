@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, session, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import defaultdict
-import sqlite3, os, time, secrets, urllib.request, urllib.error, subprocess, platform, re, json, socket, ipaddress
+import sqlite3, os, time, secrets, urllib.request, urllib.error, subprocess, platform, re, json, socket, ipaddress, html
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
@@ -51,20 +51,25 @@ def init_db():
             password TEXT NOT NULL,
             email TEXT,
             phone TEXT,
-            avatar TEXT DEFAULT NULL
+            avatar TEXT DEFAULT NULL,
+            balance INTEGER DEFAULT 0
         )
     """)
-    # 兼容旧表：如果 avatar 列不存在则添加
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL")
-    except sqlite3.OperationalError:
-        pass  # 列已存在
+    # 兼容旧表：添加缺失列
+    for col_sql in [
+        "ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN balance INTEGER DEFAULT 0",
+    ]:
+        try:
+            c.execute(col_sql)
+        except sqlite3.OperationalError:
+            pass
     admin_pw = generate_password_hash("admin123")
     alice_pw = generate_password_hash("alice2025")
-    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
-              ("admin", admin_pw, "admin@example.com", "13800138000"))
-    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
-              ("alice", alice_pw, "alice@example.com", "13900139001"))
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone, balance) VALUES (?, ?, ?, ?, ?)",
+              ("admin", admin_pw, "admin@example.com", "13800138000", 9999))
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone, balance) VALUES (?, ?, ?, ?, ?)",
+              ("alice", alice_pw, "alice@example.com", "13900139001", 100))
     conn.commit()
     conn.close()
 
@@ -94,25 +99,36 @@ USERS = {
 }
 NEXT_USER_ID = 3
 
-# 从数据库加载头像到 USERS 字典
-def load_avatars():
+# 从数据库加载数据到 USERS 字典
+def load_user_data():
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
     try:
-        c.execute("SELECT username, avatar FROM users WHERE avatar IS NOT NULL AND avatar != ''")
+        # 获取表的所有列名
+        c.execute("PRAGMA table_info(users)")
+        cols = [row[1] for row in c.fetchall()]
+
+        c.execute("SELECT * FROM users")
         for row in c.fetchall():
-            if row[0] in USERS:
-                USERS[row[0]]["avatar"] = row[1]
+            row_dict = dict(zip(cols, row))
+            uname = row_dict["username"]
+            if uname in USERS:
+                USERS[uname]["avatar"] = row_dict.get("avatar")
+                USERS[uname]["balance"] = row_dict.get("balance", 0)
     except sqlite3.OperationalError:
         pass
     conn.close()
 
-load_avatars()
+load_user_data()
 
 # 暴力破解防护
 login_attempts = defaultdict(list)
 MAX_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
+
+# 充值频率防护
+recharge_attempts = defaultdict(list)
+MAX_RECHARGE_PER_HOUR = 10
 
 def is_ip_blocked(ip):
     now = time.time()
@@ -124,7 +140,11 @@ def record_attempt(ip):
 
 def safe_user_data(user):
     if user:
-        return {k: v for k, v in user.items() if k != "password"}
+        data = {k: v for k, v in user.items() if k != "password"}
+        # 对 avatar URL 做 HTML 转义防 XSS
+        if data.get("avatar"):
+            data["avatar"] = html.escape(data["avatar"])
+        return data
     return None
 
 @app.route("/")
@@ -188,7 +208,7 @@ def register():
 
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
-        sql = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
+        sql = "INSERT INTO users (username, password, email, phone, balance) VALUES (?, ?, ?, ?, 0)"
         print(f"[SQL] {sql} (username={username})")
         try:
             c.execute(sql, (username, password_hash, email, phone))
@@ -304,6 +324,17 @@ def profile():
     target = USERS.get(username)
     if not target:
         return render_template("profile.html", error="用户不存在")
+    # 从数据库加载最新余额
+    conn5 = sqlite3.connect("data/users.db")
+    c5 = conn5.cursor()
+    try:
+        c5.execute("SELECT balance FROM users WHERE username = ?", (username,))
+        row5 = c5.fetchone()
+        if row5 and row5[0] is not None:
+            target["balance"] = row5[0]
+    except sqlite3.OperationalError:
+        pass
+    conn5.close()
     return render_template("profile.html", user=safe_user_data(target))
 
 
@@ -329,10 +360,22 @@ def recharge():
         return render_template("profile.html", user=safe_user_data(target), error="单次充值金额不能超过100,000")
 
     if target:
+        # 充值频率限制
+        ip_recharge = request.remote_addr
+        now = time.time()
+        recharge_attempts[ip_recharge] = [t for t in recharge_attempts[ip_recharge] if now - t < 3600]
+        if len(recharge_attempts[ip_recharge]) >= MAX_RECHARGE_PER_HOUR:
+            return render_template("profile.html", user=safe_user_data(target), error=f"充值过于频繁，每小时最多 {MAX_RECHARGE_PER_HOUR} 次")
+        recharge_attempts[ip_recharge].append(now)
+
         target["balance"] = target.get("balance", 0) + amount
-    # 从 session 中的用户名获取 id 跳转
-    uid = target.get("id")
-    return redirect(f"/profile?user_id={uid}")
+        # 持久化余额到数据库
+        conn3 = sqlite3.connect("data/users.db")
+        c3 = conn3.cursor()
+        c3.execute("UPDATE users SET balance = ? WHERE username = ?", (target["balance"], username))
+        conn3.commit()
+        conn3.close()
+    return redirect("/profile")
 
 
 @app.route("/change-password", methods=["POST"])
@@ -348,6 +391,12 @@ def change_password():
         return render_template("profile.html", user=safe_user_data(USERS.get(username)), error="密码长度不能少于6位")
     if username and new_password and username in USERS:
         USERS[username]["password"] = generate_password_hash(new_password)
+        # 也更新数据库密码
+        conn4 = sqlite3.connect("data/users.db")
+        c4 = conn4.cursor()
+        c4.execute("UPDATE users SET password = ? WHERE username = ?", (USERS[username]["password"], username))
+        conn4.commit()
+        conn4.close()
     return redirect("/profile")
 
 
@@ -370,7 +419,9 @@ def dynamic_page():
                     break
             if found:
                 with open(found, "r", encoding="utf-8") as f:
-                    content = f.read()
+                    raw = f.read()
+                    # 转义 HTML，防止 XSS
+                    content = "<pre style=\"white-space: pre-wrap; word-break: break-all; background: #1a1a2e; color: #f0f0f0; padding: 16px; border-radius: 4px;\">" + html.escape(raw) + "</pre>"
             else:
                 content = "页面不存在"
     else:

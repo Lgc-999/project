@@ -17,7 +17,7 @@
         <div class="upload-result">
             <p style="color: #2e7d32; margin-top: 16px;">✅ 上传成功！</p>
             <img src="{{ url }}" alt="头像预览" style="max-width: 200px; margin: 12px 0; border-radius: 8px;">
-            <p>文件链接：<a href="{{ url }}" target="_blank">{{ url }}</a></p>
+            <p>文件链接：<a href="{{ url|e }}" target="_blank">{{ url|e }}</a></p>
         </div>
     {% endif %}
 </div>
