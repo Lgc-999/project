@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, session, make_respo
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import defaultdict
 import sqlite3, os, time, secrets, urllib.request, urllib.error, subprocess, platform, re, json, socket, ipaddress, html
+from datetime import timedelta
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
@@ -11,6 +12,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     MAX_CONTENT_LENGTH=16 * 1024 * 1024,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=24),
 )
 
 # ========== CSRF 防护 ==========
@@ -259,6 +261,8 @@ def upload():
         return redirect("/login")
 
     if request.method == "POST":
+        if not validate_csrf():
+            return render_template("upload.html", error="CSRF 验证失败，请刷新页面重试")
         f = request.files.get("file")
         if not f or not f.filename:
             return render_template("upload.html", error="请选择文件")
@@ -360,6 +364,13 @@ def recharge():
         return render_template("profile.html", user=safe_user_data(target), error="单次充值金额不能超过100,000")
 
     if target:
+        # 总余额上限
+        current_balance = target.get("balance", 0)
+        MAX_BALANCE = 9999999
+        if current_balance + amount > MAX_BALANCE:
+            return render_template("profile.html", user=safe_user_data(target),
+                                   error=f"余额不能超过 {MAX_BALANCE}，当前余额 {current_balance}")
+
         # 充值频率限制
         ip_recharge = request.remote_addr
         now = time.time()
@@ -387,8 +398,11 @@ def change_password():
     # 只能修改当前登录用户自己的密码，不从表单拿 username
     username = session.get("username")
     new_password = request.form.get("new_password")
+    confirm_password = request.form.get("confirm_password")
     if not new_password or len(new_password) < 6:
         return render_template("profile.html", user=safe_user_data(USERS.get(username)), error="密码长度不能少于6位")
+    if new_password != confirm_password:
+        return render_template("profile.html", user=safe_user_data(USERS.get(username)), error="两次输入的密码不一致")
     if username and new_password and username in USERS:
         USERS[username]["password"] = generate_password_hash(new_password)
         # 也更新数据库密码
@@ -433,6 +447,9 @@ def dynamic_page():
 def fetch_url():
     if "username" not in session:
         return redirect("/login")
+    if not validate_csrf():
+        return render_template("index.html", fetch_error="CSRF 验证失败，请刷新页面重试",
+                               user=safe_user_data(USERS.get(session.get("username"))))
     url = request.form.get("url", "")
     status_code = None
     content = ""
@@ -443,10 +460,10 @@ def fetch_url():
         if parsed.scheme not in ("http", "https"):
             error = f"不支持的协议: {parsed.scheme}，仅支持 http/https"
         else:
-            # 解析目标主机名，检查是否为内网地址
             host = parsed.hostname
             try:
                 addrs = socket.getaddrinfo(host, parsed.port or 80)
+                public_addrs = []
                 for addr in addrs:
                     ip_addr = addr[4][0]
                     try:
@@ -454,25 +471,43 @@ def fetch_url():
                         if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
                             error = f"禁止访问内网地址: {ip_addr}"
                             break
+                        public_addrs.append(ip_addr)
                     except ValueError:
                         pass
+
+                if not error and public_addrs:
+                    # 固定使用解析到的 IP 发起请求，防止 DNS rebinding 攻击
+                    first_ip = public_addrs[0]
+                    ip_netloc = f"{first_ip}:{parsed.port}" if parsed.port else first_ip
+                    safe_url = urllib.parse.urlunparse((
+                        parsed.scheme,
+                        ip_netloc,
+                        parsed.path or "",
+                        parsed.params or "",
+                        parsed.query or "",
+                        parsed.fragment or ""
+                    ))
+                    req = urllib.request.Request(safe_url)
+                    # 在 Host 头中保留原始域名，使目标服务器能正确处理虚拟主机
+                    req.add_header("Host", f"{host}:{parsed.port}" if parsed.port else host)
+                    try:
+                        resp = urllib.request.urlopen(req, timeout=10)
+                        status_code = resp.status
+                        raw = resp.read()
+                        content = raw.decode("utf-8", errors="replace")[:5000]
+                    except urllib.error.HTTPError as e:
+                        status_code = e.code
+                        content = str(e.reason)[:5000]
+                    except urllib.error.URLError as e:
+                        error = f"URL 访问失败: {e.reason}"
+                    except Exception as e:
+                        error = f"请求异常: {str(e)}"
             except socket.gaierror:
                 error = f"无法解析域名: {host}"
 
-            if not error:
-                try:
-                    resp = urllib.request.urlopen(url, timeout=10)
-                    status_code = resp.status
-                    raw = resp.read()
-                    content = raw.decode("utf-8", errors="replace")[:5000]
-                except urllib.error.HTTPError as e:
-                    status_code = e.code
-                    content = str(e.reason)[:5000]
-                except urllib.error.URLError as e:
-                    error = f"URL 访问失败: {e.reason}"
-                except Exception as e:
-                    error = f"请求异常: {str(e)}"
-    return render_template("index.html", fetch_status=status_code, fetch_content=content, fetch_error=error, fetch_url=url, user=safe_user_data(USERS.get(session.get("username"))))
+    return render_template("index.html", fetch_status=status_code, fetch_content=content,
+                           fetch_error=error, fetch_url=url,
+                           user=safe_user_data(USERS.get(session.get("username"))))
 
 
 @app.route("/ping", methods=["GET", "POST"])
@@ -483,7 +518,9 @@ def ping():
     ip_val = ""
     if request.method == "POST":
         ip_val = request.form.get("ip", "").strip()
-        if ip_val:
+        if not validate_csrf():
+            result = "会话过期，请刷新页面重试"
+        elif ip_val:
             # 验证输入是否为合法的 IP 地址或域名
             is_valid = False
             try:
@@ -520,7 +557,9 @@ def xml_import():
     raw_xml = ""
     if request.method == "POST":
         raw_xml = request.form.get("xml_data", "")
-        if raw_xml.strip():
+        if not validate_csrf():
+            error = "会话过期，请刷新页面重试"
+        elif raw_xml.strip():
             try:
                 # 移除 DOCTYPE 和 ENTITY 定义，防止 XXE 攻击
                 safe_xml = re.sub(r'<!DOCTYPE[^>]*>', '', raw_xml)

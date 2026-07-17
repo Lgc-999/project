@@ -3,6 +3,7 @@
 <div class="card">
     <h2>Ping 网络诊断</h2>
     <form method="POST" action="/ping">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group" style="display: flex; gap: 8px;">
             <input type="text" name="ip" placeholder="输入 IP 地址或域名" value="{{ ip }}" style="flex: 1; font-family: Consolas, monospace;" required>
             <button type="submit" class="btn btn-primary">Ping</button>

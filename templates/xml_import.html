@@ -3,6 +3,7 @@
 <div class="card">
     <h2>XML 数据导入</h2>
     <form method="POST" action="/xml-import">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
             <label for="xml_data">输入 XML 数据</label>
             <textarea id="xml_data" name="xml_data" rows="10" style="width: 100%; font-family: Consolas, monospace; font-size: 13px; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">{{ xml_data }}</textarea>

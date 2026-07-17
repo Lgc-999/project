@@ -65,6 +65,7 @@
     <div class="card">
         <h2>URL 抓取</h2>
         <form method="POST" action="/fetch-url">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="display: flex; gap: 8px;">
                 <input type="text" name="url" placeholder="输入 URL，如 http://example.com" value="{{ fetch_url }}" style="flex: 1;" required>
                 <button type="submit" class="btn btn-primary">抓取</button>
